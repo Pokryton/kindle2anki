@@ -3,10 +3,14 @@
 import argparse
 import csv
 import html
+import json
 import re
 import sqlite3
 import sys
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 
 def parse_args() -> argparse.Namespace:
@@ -16,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "db",
         type=Path,
-        help="Path to Kindle vocab.db SQLite file",
+        help="Path to Kindle vocab.db file",
     )
     return parser.parse_args()
 
@@ -121,13 +125,142 @@ def build_front(stem: str, word: str, usage: str) -> str:
     )
 
 
-def build_back(stem: str, word: str) -> str:
-    stem_text = html.escape(stem or word)
-    return (
-        '<div style="text-align:center;font-size:30px;font-weight:700;">'
-        f"{stem_text}"
-        "</div>"
+def first_non_empty(values: list[str | None]) -> str:
+    for v in values:
+        if v and v.strip():
+            return v.strip()
+    return ""
+
+
+def fetch_definition_entry(word: str) -> dict | None:
+    if not word:
+        return None
+
+    url = f"https://api.dictionaryapi.dev/api/v2/entries/en/{quote(word)}"
+    req = Request(url, headers={"User-Agent": "k2a/0.1"})
+    try:
+        with urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except HTTPError, URLError, TimeoutError, json.JSONDecodeError:
+        return None
+
+    if not isinstance(payload, list) or not payload:
+        return None
+    first = payload[0]
+    if not isinstance(first, dict):
+        return None
+    return first
+
+
+def render_definitions(definitions: list[dict]) -> str:
+    if not definitions:
+        return ""
+
+    parts: list[str] = ["<ol>"]
+    for d in definitions:
+        if not isinstance(d, dict):
+            continue
+        definition = html.escape((d.get("definition") or "").strip())
+        example = html.escape((d.get("example") or "").strip())
+        synonyms = [html.escape(s) for s in d.get("synonyms", []) if isinstance(s, str)]
+        antonyms = [html.escape(a) for a in d.get("antonyms", []) if isinstance(a, str)]
+
+        parts.append("<li>")
+        parts.append(definition or "No definition text.")
+        detail_items: list[str] = []
+        if example:
+            detail_items.append(f"<li>Example: <i>{example}</i></li>")
+        if synonyms:
+            detail_items.append("<li>Synonyms: " + ", ".join(synonyms) + "</li>")
+        if antonyms:
+            detail_items.append("<li>Antonyms: " + ", ".join(antonyms) + "</li>")
+        if detail_items:
+            parts.append("<ul>")
+            parts.extend(detail_items)
+            parts.append("</ul>")
+        parts.append("</li>")
+
+    parts.append("</ol>")
+    return "".join(parts)
+
+
+def render_meanings(meanings: list[dict]) -> str:
+    if not meanings:
+        return ""
+
+    parts: list[str] = ['<ol style="list-style-type: upper-roman;">']
+    for meaning in meanings:
+        if not isinstance(meaning, dict):
+            continue
+        pos = html.escape((meaning.get("partOfSpeech") or "").strip())
+        definitions = meaning.get("definitions", [])
+        if not isinstance(definitions, list):
+            definitions = []
+
+        parts.append("<li>")
+        if pos:
+            parts.append(f"<i>{pos}</i>")
+        def_block = render_definitions(definitions)
+        if def_block:
+            parts.append(def_block)
+        else:
+            parts.append("<div>No definitions available.</div>")
+        parts.append("</li>")
+
+    parts.append("</ol>")
+    return "".join(parts)
+
+
+def build_back_html(headword: str, entry: dict | None) -> str:
+    title = html.escape(headword)
+    parts: list[str] = []
+
+    if not entry:
+        parts.append(f'<div style="text-align:left;font-weight:700;">{title}</div>')
+        parts.append("<div>Definition lookup failed.</div>")
+        return "".join(parts)
+
+    phonetics = entry.get("phonetics", [])
+    phonetic_from_list = ""
+    if isinstance(phonetics, list):
+        texts = []
+        for p in phonetics:
+            if isinstance(p, dict):
+                text = p.get("text")
+                if isinstance(text, str) and text.strip():
+                    texts.append(text.strip())
+        if texts:
+            phonetic_from_list = " / ".join(dict.fromkeys(texts))
+
+    phonetic = first_non_empty(
+        [
+            entry.get("phonetic") if isinstance(entry.get("phonetic"), str) else "",
+            phonetic_from_list,
+        ]
     )
+
+    header = f'<span style="font-weight:700;">{title}</span>'
+    if phonetic:
+        header += (
+            ' <span style="color:#666;"><i>' + html.escape(phonetic) + "</i></span>"
+        )
+
+    parts.append(f'<div style="text-align:left;">{header}</div>')
+
+    origin = entry.get("origin")
+    if isinstance(origin, str) and origin.strip():
+        parts.append("<div><b>Origin:</b> " + html.escape(origin.strip()) + "</div>")
+
+    meanings = entry.get("meanings", [])
+    if not isinstance(meanings, list):
+        meanings = []
+
+    if meanings:
+        parts.append(render_meanings(meanings))
+    else:
+        parts.append("<div>No meanings available.</div>")
+
+    return "".join(parts)
 
 
 def write_anki_tsv(output_path: Path, rows: list[tuple[str, str]]) -> None:
@@ -166,14 +299,16 @@ def main() -> int:
         return 0
 
     cards: list[tuple[str, str]] = []
-    for word, stem, usage in rows:
+    for i, (word, stem, usage) in enumerate(rows):
+        if i >= 10:
+            break  # FIXME: testing, remove it in later release
         base_word = (word or "").strip()
         base_stem = (stem or "").strip()
         base_usage = (usage or "").strip()
-        if not base_word and not base_stem:
+        if not base_word or not base_stem:
             continue
         front = build_front(base_stem, base_word, base_usage)
-        back = build_back(base_stem, base_word)
+        back = build_back_html(base_stem, fetch_definition_entry(base_stem))
         cards.append((front, back))
 
     if not cards:
