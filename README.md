@@ -4,6 +4,10 @@
 
 For now, it only supports English. Definitions are fetched from the [Free Dictionary API](https://dictionaryapi.dev/).
 
+## Screenshot
+
+![Screenshot](./assets/screenshot.png)
+
 ## Usage
 
 Run:
