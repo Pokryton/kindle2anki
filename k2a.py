@@ -363,7 +363,6 @@ def main() -> int:
         return 0
 
     cards: list[tuple[str, str]] = []
-    definition_cache: dict[str, dict | None] = {}
     last_request_time = 0.0
     total_rows = len(rows)
     for index, (word, stem, usage) in enumerate(rows, start=1):
@@ -373,16 +372,10 @@ def main() -> int:
         print_progress(index, total_rows, base_stem or base_word)
         if not base_word and not base_stem:
             continue
-        lookup_term = (base_stem or base_word).lower()
-        if lookup_term not in definition_cache:
-            last_request_time = maybe_throttle(
-                last_request_time, args.min_request_interval
-            )
-            definition_cache[lookup_term] = fetch_definition_entry(
-                base_stem or base_word
-            )
+        last_request_time = maybe_throttle(last_request_time, args.min_request_interval)
+        definition = fetch_definition_entry(base_stem or base_word)
         front = build_front(base_stem, base_word, base_usage)
-        back = build_back_html(base_stem or base_word, definition_cache[lookup_term])
+        back = build_back_html(base_stem or base_word, definition)
         cards.append((front, back))
 
     print()
