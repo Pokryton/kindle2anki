@@ -1,0 +1,53 @@
+.card {
+    font-family: arial;
+    font-size: 20px;
+    line-height: 1.5;
+    text-align: center;
+    color: black;
+    background-color: white;
+}
+
+.card-title {
+    font-weight: 700;
+}
+
+.card-title-front {
+    text-align: center;
+    font-size: 30px;
+}
+
+.card-title-back {
+    text-align: left;
+}
+
+.card-usage {
+    text-align: left;
+}
+
+.card-phonetic {
+    color: #666;
+}
+
+.card-origin {
+    margin-top: 0.5em;
+}
+
+.meaning-list {
+    list-style-type: upper-roman;
+}
+
+.meaning-pos {
+    font-style: italic;
+}
+
+.detail-list {
+    margin-top: 0.35em;
+}
+
+.detail-example {
+    font-style: italic;
+}
+
+ol:has(> li:only-child) {
+    list-style: none;
+}

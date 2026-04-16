@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="List books with lookups, choose one, then export Anki TSV."
+        description="Turn lookups from a Kindle Vocabulary Builder database into an Anki-importable TSV file."
     )
     parser.add_argument(
         "db",
@@ -116,10 +116,10 @@ def build_front(stem: str, word: str, usage: str) -> str:
     stem_text = html.escape(stem or word)
     usage_text = emphasize_word_in_usage(word, usage)
     return (
-        '<div style="text-align:center;font-size:30px;font-weight:700;">'
+        '<div class="card-title card-title-front">'
         f"{stem_text}"
         "</div>\n<hr>\n"
-        '<div style="text-align:left;">'
+        '<div class="card-usage">'
         f"{usage_text}"
         "</div>"
     )
@@ -169,13 +169,15 @@ def render_definitions(definitions: list[dict]) -> str:
         parts.append(definition or "No definition text.")
         detail_items: list[str] = []
         if example:
-            detail_items.append(f"<li>Example: <i>{example}</i></li>")
+            detail_items.append(
+                f'<li>Example: <span class="detail-example">{example}</span></li>'
+            )
         if synonyms:
             detail_items.append("<li>Synonyms: " + ", ".join(synonyms) + "</li>")
         if antonyms:
             detail_items.append("<li>Antonyms: " + ", ".join(antonyms) + "</li>")
         if detail_items:
-            parts.append("<ul>")
+            parts.append('<ul class="detail-list">')
             parts.extend(detail_items)
             parts.append("</ul>")
         parts.append("</li>")
@@ -188,7 +190,7 @@ def render_meanings(meanings: list[dict]) -> str:
     if not meanings:
         return ""
 
-    parts: list[str] = ['<ol style="list-style-type: upper-roman;">']
+    parts: list[str] = ['<ol class="meaning-list">']
     for meaning in meanings:
         if not isinstance(meaning, dict):
             continue
@@ -199,7 +201,7 @@ def render_meanings(meanings: list[dict]) -> str:
 
         parts.append("<li>")
         if pos:
-            parts.append(f"<i>{pos}</i>")
+            parts.append(f'<span class="meaning-pos">{pos}</span>')
         def_block = render_definitions(definitions)
         if def_block:
             parts.append(def_block)
@@ -216,7 +218,7 @@ def build_back_html(headword: str, entry: dict | None) -> str:
     parts: list[str] = []
 
     if not entry:
-        parts.append(f'<div style="text-align:left;font-weight:700;">{title}</div>')
+        parts.append(f'<div class="card-title card-title-back">{title}</div>')
         parts.append("<div>Definition lookup failed.</div>")
         return "".join(parts)
 
@@ -239,17 +241,21 @@ def build_back_html(headword: str, entry: dict | None) -> str:
         ]
     )
 
-    header = f'<span style="font-weight:700;">{title}</span>'
+    header = f'<span class="card-title">{title}</span>'
     if phonetic:
         header += (
-            ' <span style="color:#666;"><i>' + html.escape(phonetic) + "</i></span>"
+            ' <span class="card-phonetic"><i>' + html.escape(phonetic) + "</i></span>"
         )
 
-    parts.append(f'<div style="text-align:left;">{header}</div>')
+    parts.append(f'<div class="card-title-back">{header}</div>')
 
     origin = entry.get("origin")
     if isinstance(origin, str) and origin.strip():
-        parts.append("<div><b>Origin:</b> " + html.escape(origin.strip()) + "</div>")
+        parts.append(
+            '<div class="card-origin"><b>Origin:</b> '
+            + html.escape(origin.strip())
+            + "</div>"
+        )
 
     meanings = entry.get("meanings", [])
     if not isinstance(meanings, list):
@@ -268,6 +274,12 @@ def write_anki_tsv(output_path: Path, rows: list[tuple[str, str]]) -> None:
         writer = csv.writer(f, delimiter="\t", lineterminator="\n")
         for front, back in rows:
             writer.writerow([front, back])
+
+
+def print_progress(processed: int, total: int, word: str) -> None:
+    label = word or "<empty>"
+    message = f"Processing definitions: {processed}/{total} [{label}]"
+    print("\r" + (" " * 50) + "\r" + message, end="", flush=True)
 
 
 def main() -> int:
@@ -299,17 +311,25 @@ def main() -> int:
         return 0
 
     cards: list[tuple[str, str]] = []
-    for i, (word, stem, usage) in enumerate(rows):
-        if i >= 10:
-            break  # FIXME: testing, remove it in later release
+    definition_cache: dict[str, dict | None] = {}
+    total_rows = len(rows)
+    for index, (word, stem, usage) in enumerate(rows, start=1):
         base_word = (word or "").strip()
         base_stem = (stem or "").strip()
         base_usage = (usage or "").strip()
-        if not base_word or not base_stem:
+        print_progress(index, total_rows, base_stem or base_word)
+        if not base_word and not base_stem:
             continue
+        lookup_term = (base_stem or base_word).lower()
+        if lookup_term not in definition_cache:
+            definition_cache[lookup_term] = fetch_definition_entry(
+                base_stem or base_word
+            )
         front = build_front(base_stem, base_word, base_usage)
-        back = build_back_html(base_stem, fetch_definition_entry(base_stem))
+        back = build_back_html(base_stem or base_word, definition_cache[lookup_term])
         cards.append((front, back))
+
+    print()
 
     if not cards:
         print("No valid cards generated from lookups.")
