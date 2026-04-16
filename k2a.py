@@ -27,6 +27,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Path to Kindle vocab.db file",
     )
+    parser.add_argument(
+        "--min-request-interval",
+        type=float,
+        default=0.0,
+        help="Minimum seconds between definition API requests (default: 0)",
+    )
     return parser.parse_args()
 
 
@@ -164,7 +170,7 @@ def fetch_definition_entry(word: str) -> dict | None:
                     time.sleep(delay)
                     continue
             return None
-        except (URLError, TimeoutError):
+        except URLError, TimeoutError:
             if attempt < MAX_FETCH_RETRIES:
                 delay = min(10, attempt * 2)
                 print(
@@ -317,6 +323,17 @@ def print_progress(processed: int, total: int, word: str) -> None:
     print("\r" + (" " * 50) + "\r" + message, end="", flush=True)
 
 
+def maybe_throttle(last_request_time: float, min_interval: float) -> float:
+    if min_interval <= 0:
+        return time.monotonic()
+
+    now = time.monotonic()
+    elapsed = now - last_request_time
+    if elapsed < min_interval:
+        time.sleep(min_interval - elapsed)
+    return time.monotonic()
+
+
 def main() -> int:
     args = parse_args()
     if not args.db.exists():
@@ -347,6 +364,7 @@ def main() -> int:
 
     cards: list[tuple[str, str]] = []
     definition_cache: dict[str, dict | None] = {}
+    last_request_time = 0.0
     total_rows = len(rows)
     for index, (word, stem, usage) in enumerate(rows, start=1):
         base_word = (word or "").strip()
@@ -357,6 +375,9 @@ def main() -> int:
             continue
         lookup_term = (base_stem or base_word).lower()
         if lookup_term not in definition_cache:
+            last_request_time = maybe_throttle(
+                last_request_time, args.min_request_interval
+            )
             definition_cache[lookup_term] = fetch_definition_entry(
                 base_stem or base_word
             )
