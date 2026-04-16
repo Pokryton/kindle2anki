@@ -33,6 +33,12 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Minimum seconds between definition API requests (default: 0)",
     )
+    parser.add_argument(
+        "--mode",
+        choices=("basic", "cloze"),
+        default="basic",
+        help="Card mode: 'basic' shows the word on the front; 'cloze' hides it as a fill-in-the-blank sentence card",
+    )
     return parser.parse_args()
 
 
@@ -138,7 +144,24 @@ def emphasize_word_in_usage(word: str, usage: str) -> str:
     return fallback.sub(lambda m: f"<b>{m.group(0)}</b>", usage_html)
 
 
-def build_front(stem: str, word: str, usage: str) -> str:
+def cloze_word_in_usage(word: str, usage: str) -> str:
+    if not word:
+        return html.escape(usage)
+
+    pattern = re.compile(rf"\b({re.escape(word)})\b", re.IGNORECASE)
+    clozed = pattern.sub(r"{{c1::\1}}", usage)
+    if clozed != usage:
+        return html.escape(clozed)
+
+    fallback = re.compile(re.escape(word), re.IGNORECASE)
+    return html.escape(fallback.sub(lambda m: f"{{{{c1::{m.group(0)}}}}}", usage))
+
+
+def build_front(stem: str, word: str, usage: str, mode: str) -> str:
+    if mode == "cloze":
+        usage_text = cloze_word_in_usage(word or stem, usage)
+        return f'<div class="card-usage">{usage_text}</div>'
+
     stem_text = html.escape(stem or word)
     usage_text = emphasize_word_in_usage(word, usage)
     return (
@@ -185,7 +208,7 @@ def fetch_definition_entry(word: str) -> dict | None:
                     time.sleep(delay)
                     continue
             return None
-        except URLError, TimeoutError:
+        except (URLError, TimeoutError):
             if attempt < MAX_FETCH_RETRIES:
                 delay = min(10, attempt * 2)
                 print(
@@ -269,12 +292,14 @@ def render_meanings(meanings: list[dict]) -> str:
     return "".join(parts)
 
 
-def build_back_html(headword: str, entry: dict | None) -> str:
-    title = html.escape(headword)
+def build_back(word: str, stem: str, entry: dict | None) -> str:
+    headword = stem or word
+    display_headword = html.escape(headword)
     parts: list[str] = []
 
     if not entry:
-        parts.append(f'<div class="card-title card-title-back">{title}</div>')
+        header = f'<span class="card-title">{display_headword}</span>'
+        parts.append(f'<div class="card-title card-title-back">{header}</div>')
         parts.append("<div>Definition lookup failed.</div>")
         return "".join(parts)
 
@@ -297,7 +322,7 @@ def build_back_html(headword: str, entry: dict | None) -> str:
         ]
     )
 
-    header = f'<span class="card-title">{title}</span>'
+    header = f'<span class="card-title">{display_headword}</span>'
     if phonetic:
         header += (
             ' <span class="card-phonetic"><i>' + html.escape(phonetic) + "</i></span>"
@@ -392,8 +417,9 @@ def main() -> int:
             continue
         last_request_time = maybe_throttle(last_request_time, args.min_request_interval)
         definition = fetch_definition_entry(base_stem or base_word)
-        front = build_front(base_stem, base_word, base_usage)
-        back = build_back_html(base_stem or base_word, definition)
+        front = build_front(base_stem, base_word, base_usage, args.mode)
+        back = build_back(base_word, base_stem, definition)
+
         cards.append((front, back))
 
     print()
