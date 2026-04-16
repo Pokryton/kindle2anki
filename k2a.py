@@ -4,13 +4,18 @@ import argparse
 import csv
 import html
 import json
+import random
 import re
 import sqlite3
 import sys
+import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+
+MAX_FETCH_RETRIES = 5
+RETRY_BASE_SECONDS = 10
 
 
 def parse_args() -> argparse.Namespace:
@@ -138,18 +143,48 @@ def fetch_definition_entry(word: str) -> dict | None:
 
     url = f"https://api.dictionaryapi.dev/api/v2/entries/en/{quote(word)}"
     req = Request(url, headers={"User-Agent": "k2a/0.1"})
-    try:
-        with urlopen(req, timeout=10) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except HTTPError, URLError, TimeoutError, json.JSONDecodeError:
-        return None
+    for attempt in range(1, MAX_FETCH_RETRIES + 1):
+        try:
+            with urlopen(req, timeout=10) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except HTTPError as err:
+            # 429 and 5xx are usually transient. 4xx (except 429) are usually permanent.
+            if err.code == 429 or 500 <= err.code < 600:
+                retry_after = err.headers.get("Retry-After")
+                if retry_after and retry_after.isdigit():
+                    delay = int(retry_after)
+                else:
+                    delay = RETRY_BASE_SECONDS + random.randint(0, 5)
 
-    if not isinstance(payload, list) or not payload:
-        return None
-    first = payload[0]
-    if not isinstance(first, dict):
-        return None
-    return first
+                if attempt < MAX_FETCH_RETRIES:
+                    print(
+                        f"\nRate-limited/transient error ({err.code}) for '{word}'. "
+                        f"Retrying in {delay}s ({attempt}/{MAX_FETCH_RETRIES})..."
+                    )
+                    time.sleep(delay)
+                    continue
+            return None
+        except (URLError, TimeoutError):
+            if attempt < MAX_FETCH_RETRIES:
+                delay = min(10, attempt * 2)
+                print(
+                    f"\nNetwork timeout/error for '{word}'. "
+                    f"Retrying in {delay}s ({attempt}/{MAX_FETCH_RETRIES})..."
+                )
+                time.sleep(delay)
+                continue
+            return None
+        except json.JSONDecodeError:
+            return None
+
+        if not isinstance(payload, list) or not payload:
+            return None
+        first = payload[0]
+        if not isinstance(first, dict):
+            return None
+        return first
+
+    return None
 
 
 def render_definitions(definitions: list[dict]) -> str:
