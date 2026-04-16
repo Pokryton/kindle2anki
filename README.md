@@ -12,12 +12,8 @@ Run:
 ./k2a.py /path/to/vocab.db
 ```
 
-The script will:
+At the moment, each run exports cards for one selected book only (not multiple books in a single export).
 
-1. List books that have lookup history.
-2. Let you choose a book.
-3. Ask where to save the output TSV file.
-
-The exported TSV can be imported into Anki. The card HTML uses the styles defined in `k2a.css`, so it is best to create a dedicated note type in Anki and paste the contents of `k2a.css` into that note type's Styling section.
+The exported TSV can be imported into Anki. `k2a.css` contains the default styles for these cards, you can create a dedicated note type in Anki and paste the contents of `k2a.css` into that note type's Styling section.
 
 This project uses only the Python standard library, so no extra dependencies are required.
