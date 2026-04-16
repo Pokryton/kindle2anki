@@ -72,8 +72,9 @@ def choose_book(books: list[tuple[str, str, str]]) -> tuple[str, str, str] | Non
         )
 
     while True:
-        choice = input("Select a book by number (or 'q' to quit): ").strip()
-        if choice.lower() in {"q", "quit"}:
+        try:
+            choice = input("Select a book by number: ").strip()
+        except EOFError:
             return None
         if not choice.isdigit():
             print("Invalid input. Enter a number.")
@@ -91,15 +92,29 @@ def safe_filename(name: str) -> str:
     return cleaned or "anki_cards"
 
 
-def prompt_output_path(default_title: str) -> Path:
+def prompt_output_path(default_title: str) -> Path | None:
     default_name = f"{safe_filename(default_title)}.tsv"
-    raw = input(f"Output path [{default_name}]: ").strip()
-    return Path(raw) if raw else Path(default_name)
+    while True:
+        try:
+            raw = input(f"Output path [{default_name}]: ").strip()
+        except EOFError:
+            return None
+        output_path = Path(raw) if raw else Path(default_name)
+        if not output_path.exists():
+            return output_path
+
+        if confirm_overwrite(output_path):
+            return output_path
+
+        print("Please enter a different output path.")
 
 
 def confirm_overwrite(path: Path) -> bool:
     while True:
-        choice = input(f"File '{path}' exists. Overwrite? [y/N]: ").strip().lower()
+        try:
+            choice = input(f"File '{path}' exists. Overwrite? [y/N]: ").strip().lower()
+        except EOFError:
+            return False
         if choice in {"y", "yes"}:
             return True
         if choice in {"", "n", "no"}:
@@ -356,6 +371,9 @@ def main() -> int:
         authors = authors.strip()
         print(f"\nSelected: {title or '<untitled>'} ({authors or 'Unknown author'})")
         output_path = prompt_output_path(title or "anki_cards")
+        if output_path is None:
+            print("Cancelled.")
+            return 0
         rows = fetch_lookups_for_book(conn, book_id)
 
     if not rows:
@@ -382,10 +400,6 @@ def main() -> int:
 
     if not cards:
         print("No valid cards generated from lookups.")
-        return 0
-
-    if output_path.exists() and not confirm_overwrite(output_path):
-        print("Cancelled.")
         return 0
 
     write_anki_tsv(output_path, cards)
