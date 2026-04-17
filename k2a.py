@@ -181,9 +181,9 @@ def first_non_empty(values: list[str | None]) -> str:
     return ""
 
 
-def fetch_definition_entry(word: str) -> dict | None:
+def fetch_definition_entries(word: str) -> list[dict]:
     if not word:
-        return None
+        return []
 
     url = f"https://api.dictionaryapi.dev/api/v2/entries/en/{quote(word)}"
     req = Request(url, headers={"User-Agent": "k2a/0.1"})
@@ -207,7 +207,7 @@ def fetch_definition_entry(word: str) -> dict | None:
                     )
                     time.sleep(delay)
                     continue
-            return None
+            return []
         except (URLError, TimeoutError):
             if attempt < MAX_FETCH_RETRIES:
                 delay = min(10, attempt * 2)
@@ -217,18 +217,16 @@ def fetch_definition_entry(word: str) -> dict | None:
                 )
                 time.sleep(delay)
                 continue
-            return None
+            return []
         except json.JSONDecodeError:
-            return None
+            return []
 
         if not isinstance(payload, list) or not payload:
-            return None
-        first = payload[0]
-        if not isinstance(first, dict):
-            return None
-        return first
+            return []
+        entries = [item for item in payload if isinstance(item, dict)]
+        return entries
 
-    return None
+    return []
 
 
 def render_definitions(definitions: list[dict]) -> str:
@@ -292,60 +290,70 @@ def render_meanings(meanings: list[dict]) -> str:
     return "".join(parts)
 
 
-def build_back(word: str, stem: str, entry: dict | None) -> str:
+def build_back(word: str, stem: str, entries: list[dict]) -> str:
     headword = stem or word
     display_headword = html.escape(headword)
     parts: list[str] = []
 
-    if not entry:
+    if not entries:
         header = f'<span class="card-title">{display_headword}</span>'
         parts.append(f'<div class="card-title card-title-back">{header}</div>')
         parts.append("<div>Definition lookup failed.</div>")
         return "".join(parts)
 
-    phonetics = entry.get("phonetics", [])
-    phonetic_from_list = ""
-    if isinstance(phonetics, list):
-        texts = []
-        for p in phonetics:
-            if isinstance(p, dict):
-                text = p.get("text")
-                if isinstance(text, str) and text.strip():
-                    texts.append(text.strip())
-        if texts:
-            phonetic_from_list = " / ".join(dict.fromkeys(texts))
+    has_multiple_entries = len(entries) > 1
+    for i, entry in enumerate(entries, start=1):
+        phonetics = entry.get("phonetics", [])
+        phonetic_from_list = ""
+        if isinstance(phonetics, list):
+            texts = []
+            for p in phonetics:
+                if isinstance(p, dict):
+                    text = p.get("text")
+                    if isinstance(text, str) and text.strip():
+                        texts.append(text.strip())
+            if texts:
+                phonetic_from_list = " / ".join(dict.fromkeys(texts))
 
-    phonetic = first_non_empty(
-        [
-            entry.get("phonetic") if isinstance(entry.get("phonetic"), str) else "",
-            phonetic_from_list,
-        ]
-    )
-
-    header = f'<span class="card-title">{display_headword}</span>'
-    if phonetic:
-        header += (
-            ' <span class="card-phonetic"><i>' + html.escape(phonetic) + "</i></span>"
+        phonetic = first_non_empty(
+            [
+                entry.get("phonetic") if isinstance(entry.get("phonetic"), str) else "",
+                phonetic_from_list,
+            ]
         )
 
-    parts.append(f'<div class="card-title-back">{header}</div>')
+        if has_multiple_entries:
+            header = f'<span class="card-title"><sup>{i}</sup>{display_headword}</span>'
+        else:
+            header = f'<span class="card-title">{display_headword}</span>'
+        if phonetic:
+            header += (
+                ' <span class="card-phonetic"><i>'
+                + html.escape(phonetic)
+                + "</i></span>"
+            )
 
-    origin = entry.get("origin")
-    if isinstance(origin, str) and origin.strip():
-        parts.append(
-            '<div class="card-origin"><b>Origin:</b> '
-            + html.escape(origin.strip())
-            + "</div>"
-        )
+        parts.append(f'<div class="card-title-back">{header}</div>')
 
-    meanings = entry.get("meanings", [])
-    if not isinstance(meanings, list):
-        meanings = []
+        origin = entry.get("origin")
+        if isinstance(origin, str) and origin.strip():
+            parts.append(
+                '<div class="card-origin"><b>Origin:</b> '
+                + html.escape(origin.strip())
+                + "</div>"
+            )
 
-    if meanings:
-        parts.append(render_meanings(meanings))
-    else:
-        parts.append("<div>No meanings available.</div>")
+        meanings = entry.get("meanings", [])
+        if not isinstance(meanings, list):
+            meanings = []
+
+        if meanings:
+            parts.append(render_meanings(meanings))
+        else:
+            parts.append("<div>No meanings available.</div>")
+
+        if has_multiple_entries and i < len(entries):
+            parts.append("<hr>")
 
     return "".join(parts)
 
@@ -416,9 +424,9 @@ def main() -> int:
         if not base_word and not base_stem:
             continue
         last_request_time = maybe_throttle(last_request_time, args.min_request_interval)
-        definition = fetch_definition_entry(base_stem or base_word)
+        definition_entries = fetch_definition_entries(base_stem or base_word)
         front = build_front(base_stem, base_word, base_usage, args.mode)
-        back = build_back(base_word, base_stem, definition)
+        back = build_back(base_word, base_stem, definition_entries)
 
         cards.append((front, back))
 

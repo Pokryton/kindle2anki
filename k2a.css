@@ -11,6 +11,10 @@
     text-align: left;
 }
 
+.card-title > sup {
+    font-size: 0.6em;
+}
+
 .card-usage {
     text-align: left;
 }
